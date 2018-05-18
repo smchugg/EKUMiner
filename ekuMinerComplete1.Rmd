@@ -1,0 +1,192 @@
+---
+title: "ekuMiner"
+author: "Sierra Chugg"
+date: "May 17, 2018"
+output: html_document
+---
+
+```{r}
+library(tidyr)
+library(dplyr)
+library(ROCR)
+#library for lasso
+library(glmnet)
+library(glmnetUtils)
+#library for decision tree
+library(party)
+#library for SVM
+library(e1071)
+
+
+
+#high school CEEB Code
+#High school GPA
+#ACT Source
+#Sectional Center Facility Code????- can't find in data
+#No. of Days as Applicant
+#Acxiom Income Profile???? - not in data
+allData <- read.csv("E:/EKUMiner/enrollment.csv", stringsAsFactors = FALSE)
+data <- allData %>% 
+        mutate(CEEBCode = as.numeric(SORHSCH_SBGI_CODE),
+               GPA = as.numeric(SORHSCH_GPA),
+               ACT = ACT.Composite,
+               days = Days.between.application.and.term.start,
+               enrolled = as.factor(Enrolled)) %>% 
+        separate(col = STVTERM_DESC,
+             into = c("semester", "year"),
+             sep = " ") %>% 
+        select (CEEBCode, GPA, ACT, days, enrolled, year) %>% 
+        na.omit()
+
+train <- data %>% 
+      filter (year == "2013"| year == "2014"| year == "2015") %>% 
+      select(-year)
+test <- data %>% 
+      filter(year == "2016") %>% 
+      select(-year)
+
+
+############Logistic Regression ###########
+model_logistic <- glm(enrolled ~.,family=binomial(link='logit'),data=train)
+
+#finding the performance & getting ROC
+p_logistic <- predict(model_logistic, test, type="response")
+pr_logistic <- prediction(p_logistic, test$enrolled)
+prf_logistic <- performance(pr_logistic, measure = "tpr", x.measure = "fpr")
+plot(prf_logistic, main = "Logistic Regression")
+
+auc_logistic <- performance(pr_logistic, measure = "auc")
+
+
+##########Lasso (Logistic Regression with Regularization)###########
+model_lasso <- cv.glmnet(enrolled ~., data = train, family="binomial",type.measure="auc")
+
+#finding performance & getting ROC
+p_lasso <- predict(model_lasso, test, type="response", prob=TRUE)
+pr_lasso <- prediction(p_lasso[,1], test$enrolled)
+prf_lasso <- performance(pr_lasso, measure = "tpr", x.measure = "fpr")
+plot(prf_lasso, main = "Lasso (Logistic Regression with Regularization)")
+
+auc_lasso <- performance(pr_lasso, measure = "auc")
+
+##########Decision Tree###########
+model_decision = ctree(enrolled~., data = train)
+plot(model_decision, type="simple")
+
+#finding performance & getting roc
+p_decision <- predict(model_decision, newdata=test, type="response")
+pr_decision <- sapply(predict(model_decision, test,type="prob"),'[[',2)  # obtain probability of class 1 
+pr_decision <- prediction(pr_decision, test$enrolled)
+prf_decision <- performance(pr_decision, "tpr", "fpr")
+plot(prf_decision, main = "Decision Tree")
+
+auc_decision <- performance(pr_decision, measure = "auc")
+
+
+##########Support Vector Machine (SVM)###########
+model_svm <- svm(enrolled ~ . , data=train)
+
+#finding performance & getting ROC
+p_svm <- predict(model_svm, test, type="response")
+p_svm <- as.numeric(p_svm)
+pr_svm <- prediction(p_svm, test$enrolled)
+prf_svm <- performance(pr_svm, measure = "tpr", x.measure = "fpr")
+plot(prf_svm, main = "Support Vector Machine (SVM)")
+
+auc_svm <- performance(pr_svm, measure = "auc")
+
+
+##########Neural Network (General)###########
+library(neuralnet)
+train1 <- model.matrix( 
+  ~ enrolled + CEEBCode + GPA + ACT + days, 
+  data = train
+)
+
+test1 <- model.matrix( 
+  ~ enrolled + CEEBCode + GPA + ACT + days, 
+  data = test
+)
+model_nn <- neuralnet(enrolled1 ~ CEEBCode + GPA + ACT + days, train1, hidden = 5, linear.output = F) #how many hidden layers & linear.output = T (regression) or =F (classification)
+
+prob = compute(model_nn, test1[, 1:4] )
+prob.result <- prob$net.result
+
+detach(package:neuralnet,unload = T)
+
+library(ROCR)
+pr_nn <- prediction(prob.result, test1[,"enrolled1"]) #test["enrolled1"] is NA??
+prf_nn <- performance(pr_nn, measure = "tpr", x.measure = "fpr")
+plot(prf_nn, main = "Neural Network (General)")
+
+auc_nn <- performance(pr_nn, measure = "auc")
+
+
+##########K-Nearest Neighbors###########
+library(class)
+model_knn <- knn(train, test, train$enrolled, k=3, prob = TRUE)
+
+prob <- attr(model_knn, "prob")
+prob <- 2*ifelse(model_knn == "-1", 1-prob, prob) - 1
+
+#finding the performance & getting ROC
+pr_knn <- prediction(prob, test$enrolled)
+prf_knn <- performance(pr_knn, measure = "tpr", x.measure = "fpr")
+plot(prf_knn, main="K-Nearest Neighbors")
+
+auc_knn <- performance(pr_knn, measure = "auc")
+
+##########Naïve Bayes###########
+library(klaR)
+model_nb <- NaiveBayes(enrolled ~ ., data = train)
+
+#getting ROC
+p_nb <- predict(model_nb, test, type='raw') #gives a ton of erros, but internet says OK?
+pr_nb <- prediction(p_nb$posterior[, 2], test$enrolled)
+prf_nb <- performance(pr_nb, measure = "tpr", x.measure = "fpr")
+plot(prf_nb, main = "Naïve Bayes")
+
+auc_nb <- performance(pr_nb, measure = "auc")
+
+
+##########Gradient-Boosted Tree (Boosting)###########
+library(gbm)
+model_gbm = gbm(enrolled ~., data = train) #what distribution to use here?
+
+#getting ROC
+p_gbm <- predict(model_gbm, test, type="response", n.trees=100)
+pr_gbm <- prediction(p_gbmnum, enrollednum)
+
+prf_gbm <- performance(pr_gbm, measure = "tpr", x.measure = "fpr")
+plot(prf_gbm, main = "Gradient-Boosted Tree (Boosting)")
+
+auc_gbm <- performance(pr_gbm, measure = "auc")
+
+
+##########Random Forest (Bagging)###########
+library(randomForest)
+
+model_rf <- randomForest(formula = enrolled~., data = train, ntree = 10, maxnodes= 100, norm.votes = F)
+predictions=as.vector(model_rf$votes[,2])
+pr_rf=prediction(predictions[1:6545],test$enrolled)
+prf_rf=performance(pr_rf,"tpr","fpr") #plot the actual ROC curve
+plot(prf_rf, main="Random Forest (Bagging)")
+
+auc_rf <- performance(pr_rf, measure = "auc")
+
+
+##########Deep Learning (H20)###########
+library(h2o)
+h2o.init()
+testh2o <- as.h2o(test)
+trainh2o <- as.h2o(train)
+y <- "enrolled"
+x <- setdiff(names(trainh2o), "enrolled")
+
+model_dl <- h2o.deeplearning(x, y, trainh2o)
+
+prf_dl <- h2o.performance(model_dl, testh2o)
+plot(prf_dl, main = "Deep Learning (H2o)")
+
+
+```
